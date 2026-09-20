@@ -1,16 +1,3 @@
-"""
-Pyify Installer
-
-A small Tkinter wizard that:
-
-1. Explains how to create a Spotify Developer app (Client ID/Secret)
-2. Downloads the project files from GitHub into a folder you choose
-3. Explains how to set up go-librespot
-4. Offers to launch the app once everything is in place
-
-This installer itself only uses the Python standard library.
-"""
-
 import io
 import json
 import os
@@ -25,9 +12,8 @@ import urllib.error
 import urllib.request
 import webbrowser
 import zipfile
-
-from tkinter import ttk, messagebox, filedialog
-
+import tempfile
+from tkinter import messagebox, filedialog
 
 
 DEFAULT_GITHUB_REPO_URL = "https://github.com/OverlayC/Pyify.git"
@@ -60,15 +46,10 @@ CONFIG_PATH = os.path.join(
 )
 
 
-
 def ensure_librespot_config(
     config_dir: str,
     device_name: str = LIBRESPOT_DEVICE_NAME
 ):
-    """
-    Writes a minimal config.yml only if one doesn't already exist.
-    """
-
     path = os.path.join(config_dir, "config.yml")
 
     if os.path.exists(path):
@@ -87,7 +68,6 @@ def ensure_librespot_config(
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
-
 
 
 def parse_owner_repo(url: str):
@@ -111,13 +91,6 @@ def download_github_repo(
     dest_path: str,
     status_cb
 ):
-    """
-    Downloads the repo as a zip.
-
-    Tries main then master and merges the contents
-    into the destination folder.
-    """
-
     owner, repo = parse_owner_repo(repo_url)
 
     os.makedirs(dest_path, exist_ok=True)
@@ -125,7 +98,6 @@ def download_github_repo(
     last_error = None
 
     for branch in ("main", "master"):
-
         zip_url = (
             f"https://github.com/{owner}/{repo}"
             f"/archive/refs/heads/{branch}.zip"
@@ -156,7 +128,6 @@ def download_github_repo(
         with zipfile.ZipFile(
             io.BytesIO(data)
         ) as zf:
-
             names = zf.namelist()
 
             if not names:
@@ -166,8 +137,9 @@ def download_github_repo(
 
             top_folder = names[0].split("/")[0]
 
-            with _temp_extract_dir() as tmp_dir:
-
+            with tempfile.TemporaryDirectory(
+                prefix="pyify_install_"
+            ) as tmp_dir:
                 zf.extractall(tmp_dir)
 
                 extracted_root = os.path.join(
@@ -175,7 +147,7 @@ def download_github_repo(
                     top_folder
                 )
 
-                _merge_copy(
+                merge_copy(
                     extracted_root,
                     dest_path,
                     status_cb
@@ -190,41 +162,14 @@ def download_github_repo(
     )
 
 
-class _temp_extract_dir:
-    """
-    Small temporary directory context manager.
-    """
-
-    def __enter__(self):
-        import tempfile
-
-        self.path = tempfile.mkdtemp(
-            prefix="pyify_install_"
-        )
-
-        return self.path
-
-    def __exit__(self, *exc):
-        shutil.rmtree(
-            self.path,
-            ignore_errors=True
-        )
-
-
-def _merge_copy(
+def merge_copy(
     src_root: str,
     dest_root: str,
     status_cb
 ):
-    """
-    Copies src_root contents into dest_root.
-    Existing files are overwritten.
-    """
-
     for dirpath, dirnames, filenames in os.walk(
         src_root
     ):
-
         rel = os.path.relpath(
             dirpath,
             src_root
@@ -242,7 +187,6 @@ def _merge_copy(
         )
 
         for fname in filenames:
-
             src_file = os.path.join(
                 dirpath,
                 fname
@@ -261,6 +205,96 @@ def _merge_copy(
     status_cb("Files copied.")
 
 
+def find_main_app_directory(dest_path: str):
+    direct_app = os.path.join(
+        dest_path,
+        "Pyify.py"
+    )
+
+    if os.path.isfile(direct_app):
+        return dest_path
+
+    for root, dirs, files in os.walk(dest_path):
+        if "Pyify.py" in files:
+            return root
+
+    return None
+
+
+def install_requirements(
+    dest_path: str,
+    status_cb
+):
+    app_dir = find_main_app_directory(
+        dest_path
+    )
+
+    if not app_dir:
+        status_cb(
+            "Pyify.py was not found. Skipping requirements installation."
+        )
+        return False
+
+    requirements_path = os.path.join(
+        app_dir,
+        "requirements.txt"
+    )
+
+    if not os.path.isfile(requirements_path):
+        status_cb(
+            "No requirements.txt found next to Pyify.py."
+        )
+        return True
+
+    status_cb(
+        f"Installing packages from {requirements_path}..."
+    )
+
+    try:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                requirements_path
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            encoding="utf-8",
+            errors="replace"
+        )
+
+        if process.stdout:
+            for line in process.stdout:
+                line = line.strip()
+
+                if line:
+                    status_cb(
+                        f"pip: {line}"
+                    )
+
+        return_code = process.wait()
+
+        if return_code != 0:
+            raise RuntimeError(
+                f"pip exited with code {return_code}."
+            )
+
+        status_cb(
+            "All required packages were installed."
+        )
+
+        return True
+
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to install requirements: {e}"
+        )
+
 
 def save_partial_config(**fields):
     os.makedirs(
@@ -271,7 +305,6 @@ def save_partial_config(**fields):
     cfg = {}
 
     if os.path.exists(CONFIG_PATH):
-
         try:
             with open(
                 CONFIG_PATH,
@@ -279,7 +312,6 @@ def save_partial_config(**fields):
                 encoding="utf-8"
             ) as f:
                 cfg = json.load(f)
-
         except Exception:
             cfg = {}
 
@@ -301,11 +333,9 @@ def save_partial_config(**fields):
         )
 
 
-
 class InstallerApp:
 
     def __init__(self):
-
         self.root = tk.Tk()
 
         self.root.title(
@@ -368,16 +398,12 @@ class InstallerApp:
 
         self.show_step()
 
-
     def clear(self):
-
         for w in self.container.winfo_children():
             w.destroy()
 
     def show_step(self):
-
         self.clear()
-
         self.steps[
             self.step_index
         ]()
@@ -389,7 +415,6 @@ class InstallerApp:
         on_next=None,
         next_enabled=True
     ):
-
         row = tk.Frame(parent)
 
         row.pack(
@@ -400,7 +425,6 @@ class InstallerApp:
         )
 
         if self.step_index > 0:
-
             tk.Button(
                 row,
                 text="Back",
@@ -429,20 +453,14 @@ class InstallerApp:
         return btn
 
     def go_back(self):
-
         self.step_index -= 1
-
         self.show_step()
 
     def go_next(self):
-
         self.step_index += 1
-
         self.show_step()
 
-
     def build_step_spotify(self):
-
         f = self.container
 
         tk.Label(
@@ -541,9 +559,7 @@ class InstallerApp:
 
         self.nav_buttons(f)
 
-
     def build_step_download(self):
-
         f = self.container
 
         tk.Label(
@@ -676,7 +692,6 @@ class InstallerApp:
         self.nav_buttons(f)
 
     def browse_dest(self):
-
         path = filedialog.askdirectory(
             title="Choose install folder"
         )
@@ -685,9 +700,7 @@ class InstallerApp:
             self.dest_path.set(path)
 
     def skip_download(self):
-
         if not self.dest_path.get().strip():
-
             messagebox.showwarning(
                 "Install folder needed",
                 (
@@ -695,30 +708,23 @@ class InstallerApp:
                     "you're supplying the files yourself."
                 )
             )
-
             return
 
         self.go_next()
 
     def do_download(self):
-
         dest = self.dest_path.get().strip()
-
         repo = self.repo_url.get().strip()
 
         if not dest:
-
             messagebox.showwarning(
                 "Missing folder",
                 "Choose an install folder first."
             )
-
             return
 
         def work():
-
             try:
-
                 download_github_repo(
                     repo,
                     dest,
@@ -726,11 +732,19 @@ class InstallerApp:
                 )
 
                 self.set_download_status(
-                    f"Done. Files installed to: {dest}"
+                    "Files downloaded. Checking requirements.txt..."
+                )
+
+                install_requirements(
+                    dest,
+                    self.set_download_status
+                )
+
+                self.set_download_status(
+                    f"Done. Files and required packages installed to: {dest}"
                 )
 
             except Exception as e:
-
                 self.set_download_status(
                     f"Failed: {e}"
                 )
@@ -745,17 +759,24 @@ class InstallerApp:
         ).start()
 
     def set_download_status(self, text):
-
         self.root.after(
             0,
-            lambda: self.download_status.config(
-                text=text
-            )
+            lambda: self._safe_set_download_status(text)
         )
 
+    def _safe_set_download_status(self, text):
+        try:
+            if (
+                hasattr(self, "download_status")
+                and self.download_status.winfo_exists()
+            ):
+                self.download_status.config(
+                    text=text
+                )
+        except tk.TclError:
+            pass
 
     def build_step_librespot(self):
-
         f = self.container
 
         tk.Label(
@@ -964,7 +985,6 @@ class InstallerApp:
         self.nav_buttons(f)
 
     def browse_librespot(self):
-
         path = filedialog.askopenfilename(
             title="Select go-librespot executable",
             filetypes=[
@@ -976,9 +996,7 @@ class InstallerApp:
         if path:
             self.librespot_path.set(path)
 
-
     def _clean_log_line(self, line):
-
         line = re.sub(
             r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])",
             "",
@@ -995,7 +1013,6 @@ class InstallerApp:
         return line
 
     def _extract_login_url(self, line):
-
         line = self._clean_log_line(line)
 
         match = AUTHORIZE_URL_RE.search(line)
@@ -1012,61 +1029,57 @@ class InstallerApp:
         return url
 
     def _log_librespot(self, line):
+        try:
+            if (
+                hasattr(self, "librespot_log")
+                and self.librespot_log.winfo_exists()
+            ):
+                self.librespot_log.config(
+                    state="normal"
+                )
 
-        self.librespot_log.config(
-            state="normal"
-        )
+                self.librespot_log.insert(
+                    "end",
+                    line
+                )
 
-        self.librespot_log.insert(
-            "end",
-            line
-        )
+                self.librespot_log.see(
+                    "end"
+                )
 
-        self.librespot_log.see(
-            "end"
-        )
-
-        self.librespot_log.config(
-            state="disabled"
-        )
+                self.librespot_log.config(
+                    state="disabled"
+                )
+        except tk.TclError:
+            pass
 
         if self.librespot_log_file:
-
             try:
-
                 with open(
                     self.librespot_log_file,
                     "a",
                     encoding="utf-8",
                     errors="replace"
                 ) as f:
-
                     f.write(line)
-
             except Exception:
                 pass
 
-
     def start_librespot_test(self):
-
         path = self.librespot_path.get().strip()
 
         if not path or not os.path.exists(path):
-
             messagebox.showwarning(
                 "Path needed",
                 "Choose a valid go-librespot executable first."
             )
-
             return
 
         if self.librespot_test_proc:
-
             messagebox.showinfo(
                 "Already running",
                 "go-librespot is already running."
             )
-
             return
 
         config_dir = os.path.dirname(
@@ -1083,23 +1096,18 @@ class InstallerApp:
         )
 
         try:
-
             with open(
                 self.librespot_log_file,
                 "w",
                 encoding="utf-8"
             ) as f:
-
                 f.write(
                     "=== Pyify go-librespot log ===\n\n"
                 )
-
         except Exception:
-
             self.librespot_log_file = None
 
         try:
-
             self.librespot_test_proc = subprocess.Popen(
                 [
                     path,
@@ -1114,52 +1122,54 @@ class InstallerApp:
             )
 
         except Exception as e:
-
             messagebox.showerror(
                 "Couldn't start go-librespot",
                 str(e)
             )
 
             self.librespot_test_proc = None
-
             return
 
         self._librespot_ready = False
 
-        self.start_librespot_btn.config(
-            state="disabled"
-        )
+        try:
+            self.start_librespot_btn.config(
+                state="disabled"
+            )
 
-        self.stop_librespot_btn.config(
-            state="normal"
-        )
+            self.stop_librespot_btn.config(
+                state="normal"
+            )
 
-        self.librespot_status.config(
-            text="Starting...",
-            fg="gray"
-        )
+            self.librespot_status.config(
+                text="Starting...",
+                fg="gray"
+            )
 
-        self.login_link_entry.delete(
-            0,
-            tk.END
-        )
+            self.login_link_entry.delete(
+                0,
+                tk.END
+            )
 
-        self.open_link_btn.config(
-            state="disabled"
-        )
+            self.open_link_btn.config(
+                state="disabled"
+            )
 
-        self.librespot_log.config(
-            state="normal"
-        )
+            self.librespot_log.config(
+                state="normal"
+            )
 
-        self.librespot_log.delete(
-            "1.0",
-            tk.END
-        )
+            self.librespot_log.delete(
+                "1.0",
+                tk.END
+            )
 
-        self.librespot_log.config(
-            state="disabled"
-        )
+            self.librespot_log.config(
+                state="disabled"
+            )
+
+        except tk.TclError:
+            pass
 
         threading.Thread(
             target=self._stream_librespot_log,
@@ -1171,83 +1181,88 @@ class InstallerApp:
             daemon=True
         ).start()
 
-
     def _stream_librespot_log(self):
-
         proc = self.librespot_test_proc
 
         if not proc or not proc.stdout:
             return
 
         try:
-
             for raw_line in proc.stdout:
-
                 line = self._clean_log_line(
                     raw_line
                 )
 
+                try:
+                    self.root.after(
+                        0,
+                        self._log_librespot,
+                        line
+                    )
+
+                    url = self._extract_login_url(
+                        line
+                    )
+
+                    if url:
+                        self.root.after(
+                            0,
+                            self._show_login_link,
+                            url
+                        )
+
+                except tk.TclError:
+                    return
+
+        except Exception as e:
+            try:
                 self.root.after(
                     0,
                     self._log_librespot,
-                    line
+                    f"\n[Installer] Log reader stopped: {e}\n"
                 )
-
-                url = self._extract_login_url(
-                    line
-                )
-
-                if url:
-
-                    self.root.after(
-                        0,
-                        self._show_login_link,
-                        url
-                    )
-
-        except Exception as e:
-
-            self.root.after(
-                0,
-                self._log_librespot,
-                f"\n[Installer] Log reader stopped: {e}\n"
-            )
-
+            except tk.TclError:
+                pass
 
     def _show_login_link(self, url):
+        try:
+            url = self._extract_login_url(
+                url
+            )
 
-        url = self._extract_login_url(
-            url
-        )
+            if not url:
+                return
 
-        if not url:
-            return
+            self.login_link_entry.delete(
+                0,
+                tk.END
+            )
 
-        self.login_link_entry.delete(
-            0,
-            tk.END
-        )
+            self.login_link_entry.insert(
+                0,
+                url
+            )
 
-        self.login_link_entry.insert(
-            0,
-            url
-        )
+            self.open_link_btn.config(
+                state="normal"
+            )
 
-        self.open_link_btn.config(
-            state="normal"
-        )
+            self.librespot_status.config(
+                text=(
+                    "Login link ready - click 'Open Link', "
+                    "then approve access in your browser."
+                ),
+                fg="#b8860b"
+            )
 
-        self.librespot_status.config(
-            text=(
-                "Login link ready - click 'Open Link', "
-                "then approve access in your browser."
-            ),
-            fg="#b8860b"
-        )
+        except tk.TclError:
+            pass
 
     def open_login_link(self):
-
-        url = self.login_link_entry.get().strip()
+        try:
+            url = self.login_link_entry.get().strip()
+        except tk.TclError:
+            return
 
         if not url:
             return
@@ -1260,23 +1275,16 @@ class InstallerApp:
             url = cleaned_url
 
         try:
-
             if sys.platform == "win32":
-
                 os.startfile(url)
-
             else:
-
                 webbrowser.open_new(url)
 
         except Exception as e:
-
             try:
-
                 webbrowser.open_new(url)
 
             except Exception:
-
                 messagebox.showerror(
                     "Couldn't open login link",
                     (
@@ -1286,11 +1294,8 @@ class InstallerApp:
                     )
                 )
 
-
     def _poll_librespot_ready(self):
-
         for _ in range(90):
-
             proc = self.librespot_test_proc
 
             if not proc:
@@ -1300,12 +1305,10 @@ class InstallerApp:
                 return
 
             try:
-
                 with urllib.request.urlopen(
                     f"{GO_LIBRESPOT_API}/",
                     timeout=1
                 ) as resp:
-
                     data = json.loads(
                         resp.read().decode(
                             "utf-8"
@@ -1313,11 +1316,13 @@ class InstallerApp:
                     )
 
                 if data.get("playback_ready"):
-
-                    self.root.after(
-                        0,
-                        self._on_librespot_ready
-                    )
+                    try:
+                        self.root.after(
+                            0,
+                            self._on_librespot_ready
+                        )
+                    except tk.TclError:
+                        pass
 
                     return
 
@@ -1327,21 +1332,23 @@ class InstallerApp:
             time.sleep(1)
 
     def _on_librespot_ready(self):
+        try:
+            self._librespot_ready = True
 
-        self._librespot_ready = True
+            self.librespot_status.config(
+                text=(
+                    f"Connected as a Spotify Connect device named "
+                    f"'{LIBRESPOT_DEVICE_NAME}'.\n"
+                    "Now open Spotify (phone, desktop, or web player), "
+                    "click the Connect/devices icon near the playback bar, "
+                    f"and select '{LIBRESPOT_DEVICE_NAME}' so playback "
+                    "routes through this app."
+                ),
+                fg="#1a7f37"
+            )
 
-        self.librespot_status.config(
-            text=(
-                f"Connected as a Spotify Connect device named "
-                f"'{LIBRESPOT_DEVICE_NAME}'.\n"
-                "Now open Spotify (phone, desktop, or web player), "
-                "click the Connect/devices icon near the playback bar, "
-                f"and select '{LIBRESPOT_DEVICE_NAME}' so playback "
-                "routes through this app."
-            ),
-            fg="#1a7f37"
-        )
-
+        except tk.TclError:
+            pass
 
     def stop_librespot_test(self):
         if self.librespot_test_proc:
@@ -1374,16 +1381,11 @@ class InstallerApp:
         except tk.TclError:
             pass
 
-
     def on_close(self):
-
         self.stop_librespot_test()
-
         self.root.destroy()
 
-
     def build_step_finish(self):
-
         f = self.container
 
         tk.Label(
@@ -1459,7 +1461,6 @@ class InstallerApp:
             side="right"
         )
 
-
     def finish(self):
         if self.librespot_test_proc:
             try:
@@ -1478,12 +1479,16 @@ class InstallerApp:
         if self.launch_after.get():
             dest = self.dest_path.get().strip()
 
+            app_dir = find_main_app_directory(
+                dest
+            ) if dest else None
+
             app_path = (
                 os.path.join(
-                    dest,
+                    app_dir,
                     "Pyify.py"
                 )
-                if dest
+                if app_dir
                 else None
             )
 
@@ -1494,13 +1499,15 @@ class InstallerApp:
                             sys.executable,
                             app_path
                         ],
-                        cwd=dest
+                        cwd=app_dir
                     )
+
                 except Exception as e:
                     messagebox.showerror(
                         "Couldn't launch",
                         str(e)
                     )
+
             else:
                 messagebox.showinfo(
                     "Pyify.py not found",
@@ -1513,11 +1520,8 @@ class InstallerApp:
 
         self.root.destroy()
 
-
     def run(self):
-
         self.root.mainloop()
-
 
 
 if __name__ == "__main__":
