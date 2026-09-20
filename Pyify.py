@@ -37,9 +37,7 @@ os.makedirs(os.path.dirname(LOG), exist_ok=True)
 sys.stderr = open(LOG, "a", buffering=1, encoding="utf-8")
 sys.stdout = sys.stderr
 
-# ---------------------------------------------------------------------------
-# Paths & constants
-# ---------------------------------------------------------------------------
+
 APP_DIR = os.path.join(os.path.expanduser("~"), ".spotify_replacement")
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 TOKEN_CACHE_PATH = os.path.join(APP_DIR, ".spotify_token_cache")
@@ -49,7 +47,6 @@ GO_LIBRESPOT_API = "http://127.0.0.1:3678"
 os.makedirs(APP_DIR, exist_ok=True)
 os.makedirs(COVER_CACHE_DIR, exist_ok=True)
 
-# Blue Fluent-style palette
 ACCENT = (0, 120, 212, 255)
 ACCENT_LIGHT = (64, 156, 255, 255)
 BG_DARK = (10, 13, 20, 255)
@@ -61,9 +58,7 @@ TEXT_BRIGHT = (235, 238, 245, 255)
 WINDOW_TITLE = "Pyify"
 CORNER_RADIUS = 15
 
-# Fonts that cover Latin-1 / accented characters + general punctuation
-# (curly quotes, en/em dashes, ellipsis) so real Spotify metadata never
-# renders as "?" boxes. Tried in order; first one found on disk is used.
+
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\segoeui.ttf",
     r"C:\Windows\Fonts\arial.ttf",
@@ -73,9 +68,6 @@ FONT_CANDIDATES = [
 ]
 FONT_SIZE = 17
 
-# ---------------------------------------------------------------------------
-# Win32 setup
-# ---------------------------------------------------------------------------
 if sys.platform == "win32":
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -145,7 +137,6 @@ if sys.platform == "win32":
         ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint
     ]
 
-    # Constants
     GWL_STYLE = -16
     GWLP_WNDPROC = -4
 
@@ -199,9 +190,7 @@ else:
     gdi32 = None
 
 
-# ---------------------------------------------------------------------------
-# OS detection
-# ---------------------------------------------------------------------------
+
 def is_windows_11():
     if sys.platform != "win32":
         return False
@@ -211,9 +200,7 @@ def is_windows_11():
         return False
 
 
-# ---------------------------------------------------------------------------
-# Viewport customizer
-# ---------------------------------------------------------------------------
+
 class ViewportCustomizer:
     def __init__(self, title: str, radius: int = CORNER_RADIUS):
         self.hwnd = None
@@ -230,17 +217,15 @@ class ViewportCustomizer:
             return
         print(f"[ViewportCustomizer] found DPG HWND = {self.hwnd}")
 
-        # 1. Add WS_THICKFRAME for resize + snap
         style = user32.GetWindowLongW(self.hwnd, GWL_STYLE)
         style |= WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
-        style &= ~WS_THICKFRAME   # <-- key change
+        style &= ~WS_THICKFRAME   
         user32.SetWindowLongW(self.hwnd, GWL_STYLE, style)
         user32.SetWindowPos(
             self.hwnd, None, 0, 0, 0, 0,
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         )
 
-        # 2. Dark mode title bar
         try:
             dark = ctypes.c_int(1)
             dwmapi.DwmSetWindowAttribute(
@@ -253,7 +238,6 @@ class ViewportCustomizer:
         except Exception as e:
             print("[ViewportCustomizer] dark mode:", e)
 
-        # 3. Ask DWM to round the corners (Win11)
         if is_windows_11():
             try:
                 pref = ctypes.c_int(DWMWCP_ROUND)
@@ -265,8 +249,6 @@ class ViewportCustomizer:
             except Exception as e:
                 print("[ViewportCustomizer] DWM rounding error:", e)
 
-        # 4. Disable DWM's rectangular 1px frame border so it doesn't
-        #    draw a straight line over our rounded clip.
         try:
             color = ctypes.c_uint(DWMWA_COLOR_NONE)
             dwmapi.DwmSetWindowAttribute(
@@ -277,10 +259,10 @@ class ViewportCustomizer:
         except Exception as e:
             print("[ViewportCustomizer] border disable:", e)
 
-        # 5. Apply SetWindowRgn for the actual rounded clip
+
         self._apply_region()
 
-        # 6. Subclass WndProc
+
         self._wndproc_ref = WNDPROC(self._wnd_proc)
         self._orig_proc = user32.GetWindowLongPtrW(self.hwnd, GWLP_WNDPROC)
         user32.SetWindowLongPtrW(
@@ -339,8 +321,6 @@ class ViewportCustomizer:
         return found[0][0] if found else None
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
-        # No non-client area — this suppresses the native title bar
-        # even though WS_THICKFRAME is set.
         if msg == WM_NCCALCSIZE and wparam:
             return 0
 
@@ -387,9 +367,6 @@ class ViewportCustomizer:
             user32.ShowWindow(self.hwnd, SW_MINIMIZE)
 
 
-# ---------------------------------------------------------------------------
-# Config helpers
-# ---------------------------------------------------------------------------
 def load_config() -> dict:
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -446,9 +423,6 @@ def make_spotify(client_id: str, client_secret: str):
     )
 
 
-# ---------------------------------------------------------------------------
-# Cover helpers
-# ---------------------------------------------------------------------------
 _texture_cache: dict = {}
 
 
@@ -477,10 +451,6 @@ def load_texture(url: Optional[str], size: int = 64) -> Optional[int]:
         img = Image.open(path).convert("RGBA")
         img = img.resize((size, size), Image.LANCZOS)
 
-        # Round the corners: cut a rounded-rect alpha mask and multiply it
-        # into the image's own alpha channel. Radius scales with image size
-        # (small thumbnails get a subtle round, the big cover gets more),
-        # capped so large covers don't turn into a circle.
         radius = min(28, max(6, int(size * 0.18)))
         mask = Image.new("L", (size, size), 0)
         ImageDraw.Draw(mask).rounded_rectangle(
@@ -503,9 +473,6 @@ def load_texture(url: Optional[str], size: int = 64) -> Optional[int]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Track builder
-# ---------------------------------------------------------------------------
 def build_track_from_spotify(t: dict) -> dict:
     if not t:
         return {}
@@ -524,17 +491,12 @@ def build_track_from_spotify(t: dict) -> dict:
         "name": t.get("name") or "Unknown",
         "artists": ", ".join(a["name"] for a in t.get("artists") or []),
         "album": (t.get("album") or {}).get("name", ""),
-        # Use a mid-size image (index 1 when available) for list thumbnails -
-        # the smallest Spotify image is often too low-res once upscaled.
         "cover": (imgs[1]["url"] if len(imgs) > 1 else (imgs[0]["url"] if imgs else None)),
         "cover_small": imgs[-1]["url"] if imgs else None,
         "duration_ms": t.get("duration_ms") or 0,
     }
 
 
-# ---------------------------------------------------------------------------
-# Main App
-# ---------------------------------------------------------------------------
 class SpotifyApp:
     def __init__(self):
         self.cfg = load_config()
@@ -607,8 +569,8 @@ class SpotifyApp:
             with dpg.font_registry():
                 with dpg.font(font_path, FONT_SIZE) as default_font:
                     dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
-                    dpg.add_font_range(0x0100, 0x017F)  # Latin Extended-A
-                    dpg.add_font_range(0x2000, 0x206F)  # general punctuation (–, —, ‘’“”, …)
+                    dpg.add_font_range(0x0100, 0x017F)  
+                    dpg.add_font_range(0x2000, 0x206F)  
             dpg.bind_font(default_font)
             print("[font] loaded", font_path)
         except Exception as e:
@@ -638,16 +600,12 @@ class SpotifyApp:
                 dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 8, 6)
         dpg.bind_theme(global_theme)
 
-        # Tighter vertical spacing specifically for the title/subtitle stack
-        # inside each track row, independent of the global item spacing.
+
         with dpg.theme() as tight_theme:
             with dpg.theme_component(dpg.mvGroup):
                 dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 0, 0)
         self._tight_theme = tight_theme
 
-    # ------------------------------------------------------------------
-    # UI construction
-    # ------------------------------------------------------------------
     def _build_ui(self):
         with dpg.window(
             tag="main_window",
@@ -687,7 +645,6 @@ class SpotifyApp:
             dpg.add_separator()
 
             with dpg.group(horizontal=True):
-                # Narrow left nav - icon-scale buttons, short labels
                 with dpg.child_window(width=92, height=-140, border=False):
                     dpg.add_button(label="Home", width=-1, callback=lambda: self._show_home())
                     dpg.add_button(label="Library", width=-1, callback=lambda: self._show_library())
@@ -699,11 +656,10 @@ class SpotifyApp:
                     dpg.add_text("Status", color=TEXT_DIM)
                     dpg.add_text("Ready", tag="status_label", color=TEXT_DIM, wrap=80)
 
-                # Center content
                 with dpg.child_window(tag="content_area", width=-280, height=-140, border=False):
                     dpg.add_text("Loading...", tag="content_placeholder")
 
-                # Right "Now Playing" panel
+
                 with dpg.child_window(tag="right_panel", width=270, height=-140, border=False):
                     dpg.add_text("NOW PLAYING", color=TEXT_DIM)
                     dpg.add_spacer(height=10)
@@ -716,7 +672,6 @@ class SpotifyApp:
 
             dpg.add_separator()
 
-            # Taller, two-row, "card" style player bar
             with dpg.child_window(tag="player_bar_container", height=120, border=False):
                 dpg.add_spacer(height=6)
                 with dpg.group(horizontal=True, tag="player_bar_top"):
@@ -799,9 +754,6 @@ class SpotifyApp:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Boot
-    # ------------------------------------------------------------------
     def _boot(self):
         try:
             self.sp = make_spotify(self.cfg["client_id"], self.cfg["client_secret"])
@@ -827,7 +779,6 @@ class SpotifyApp:
         config_dir = os.path.dirname(os.path.abspath(self.cfg["librespot_path"]))
         ensure_librespot_config(config_dir)
 
-        # Hide the console window on Windows
         startupinfo = None
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
@@ -919,7 +870,6 @@ class SpotifyApp:
                 or track.get("image_url")
             )
             if cover_url:
-                # small cover for the bottom player bar
                 tex_small = load_texture(cover_url, size=64)
                 if tex_small is not None and tex_small != self._player_cover_tag:
                     self._player_cover_tag = tex_small
@@ -927,7 +877,6 @@ class SpotifyApp:
                         dpg.delete_item("player_cover_group", children_only=True)
                         dpg.add_image(tex_small, parent="player_cover_group", width=64, height=64)
 
-                # large cover for the right "Now Playing" panel
                 tex_large = load_texture(cover_url, size=230)
                 if tex_large is not None and tex_large != self._right_cover_tag:
                     self._right_cover_tag = tex_large
@@ -937,9 +886,6 @@ class SpotifyApp:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Data loading
-    # ------------------------------------------------------------------
     def _load_all_data(self):
         if not self.sp:
             return
@@ -1245,9 +1191,6 @@ class SpotifyApp:
     def _on_play_row_clicked(self, sender, app_data, user_data):
         self._play_uri(user_data)
 
-    # ------------------------------------------------------------------
-    # Playback
-    # ------------------------------------------------------------------
     def _play_uri(self, uri):
         if not uri:
             self._show_status("No URI to play")
@@ -1319,6 +1262,6 @@ class SpotifyApp:
         self._pool.shutdown(wait=False)
 
 
-# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     SpotifyApp()
