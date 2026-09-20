@@ -1,0 +1,8 @@
+device_name: PyifyDevice
+credentials:
+  type: interactive
+zeroconf_enabled: false
+server:
+  enabled: true
+  address: 127.0.0.1
+  port: 3678

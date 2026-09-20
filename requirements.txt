@@ -1,0 +1,5 @@
+dearpygui
+requests
+pyyaml
+Pillow
+spotipy
